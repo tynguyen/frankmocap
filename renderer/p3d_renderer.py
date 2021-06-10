@@ -7,22 +7,24 @@ import os
 import sys
 import torch
 import numpy as np
+import matplotlib.pyplot as plt
+import open3d
 
 from pytorch3d.structures import Meshes
 from pytorch3d.renderer.mesh import Textures
 from pytorch3d.renderer import (
     PerspectiveCameras,
     FoVOrthographicCameras,
-    PointLights, 
-    RasterizationSettings, 
-    MeshRenderer, 
+    PointLights,
+    RasterizationSettings,
+    MeshRenderer,
     BlendParams,
-    MeshRasterizer,  
+    MeshRasterizer,
     SoftPhongShader,
 )
 
-class Pytorch3dRenderer(object):
 
+class Pytorch3dRenderer(object):
     def __init__(self, img_size, mesh_color):
         self.device = torch.device("cuda:0")
         # self.render_size = 1920
@@ -31,40 +33,44 @@ class Pytorch3dRenderer(object):
 
         # mesh color
         mesh_color = np.array(mesh_color)[::-1]
-        self.mesh_color = torch.from_numpy(
-            mesh_color.copy()).view(1, 1, 3).float().to(self.device)
+        self.mesh_color = (
+            torch.from_numpy(mesh_color.copy()).view(1, 1, 3).float().to(self.device)
+        )
 
         # renderer for large objects, such as whole body.
         self.render_size_large = 700
         lights = PointLights(
-            ambient_color = [[1.0, 1.0, 1.0],],
-            diffuse_color = [[1.0, 1.0, 1.0],],
-            device=self.device, location=[[1.0, 1.0, -30]])
+            ambient_color=[[1.0, 1.0, 1.0],],
+            diffuse_color=[[1.0, 1.0, 1.0],],
+            device=self.device,
+            location=[[1.0, 1.0, -30]],
+        )
         self.renderer_large = self.__get_renderer(self.render_size_large, lights)
 
         # renderer for small objects, such as whole body.
         self.render_size_medium = 400
         lights = PointLights(
-            ambient_color = [[0.5, 0.5, 0.5],],
-            diffuse_color = [[0.5, 0.5, 0.5],],
-            device=self.device, location=[[1.0, 1.0, -30]])
+            ambient_color=[[0.5, 0.5, 0.5],],
+            diffuse_color=[[0.5, 0.5, 0.5],],
+            device=self.device,
+            location=[[1.0, 1.0, -30]],
+        )
         self.renderer_medium = self.__get_renderer(self.render_size_medium, lights)
-
 
         # renderer for small objects, such as whole body.
         self.render_size_small = 200
         lights = PointLights(
-            ambient_color = [[0.5, 0.5, 0.5],],
-            diffuse_color = [[0.5, 0.5, 0.5],],
-            device=self.device, location=[[1.0, 1.0, -30]])
+            ambient_color=[[0.5, 0.5, 0.5],],
+            diffuse_color=[[0.5, 0.5, 0.5],],
+            device=self.device,
+            location=[[1.0, 1.0, -30]],
+        )
         self.renderer_small = self.__get_renderer(self.render_size_small, lights)
-
-
 
     def __get_renderer(self, render_size, lights):
 
         cameras = FoVOrthographicCameras(
-            device = self.device,
+            device=self.device,
             znear=0.1,
             zfar=10.0,
             max_y=1.0,
@@ -75,29 +81,27 @@ class Pytorch3dRenderer(object):
         )
 
         raster_settings = RasterizationSettings(
-            image_size = render_size,
-            blur_radius = 0,
-            faces_per_pixel = 1,
+            image_size=render_size, blur_radius=0, faces_per_pixel=1,
         )
-        blend_params = BlendParams(sigma=1e-4, gamma=1e-4, background_color = (0,0,0))
+        blend_params = BlendParams(sigma=1e-4, gamma=1e-4, background_color=(0, 0, 0))
 
         renderer = MeshRenderer(
-            rasterizer=MeshRasterizer(
-                cameras=cameras, 
-                raster_settings=raster_settings
-            ),
+            rasterizer=MeshRasterizer(cameras=cameras, raster_settings=raster_settings),
             shader=SoftPhongShader(
-                device=self.device, 
+                device=self.device,
                 cameras=cameras,
                 lights=lights,
-                blend_params=blend_params
-            )
+                blend_params=blend_params,
+            ),
         )
 
         return renderer
-    
 
     def render(self, verts, faces, bg_img):
+        """
+        @inputs:
+            bg_img: 1920 canvas
+        """
         verts = verts.copy()
         faces = faces.copy()
 
@@ -123,20 +127,34 @@ class Pytorch3dRenderer(object):
                 # print("Using large size renderer")
                 render_size = self.render_size_large
                 renderer = self.renderer_large
-        
+
         # padding the tight bbox
         margin = int(max(width, height) * 0.1)
-        x0 = max(0, x0-margin)
-        y0 = max(0, y0-margin)
-        x1 = min(self.img_size, x1+margin)
-        y1 = min(self.img_size, y1+margin)
+        x0 = max(0, x0 - margin)
+        y0 = max(0, y0 - margin)
+        x1 = min(self.img_size, x1 + margin)
+        y1 = min(self.img_size, y1 + margin)
+
+        print("old X0: ", x0)
+        print("old verts: ", verts[:4])
+        print("Margin: ", margin)
 
         # move verts to be in the bbox
         verts[:, 0] -= x0
         verts[:, 1] -= y0
 
+        # Test
+        breakpoint()
+        bbox_crop = bg_img[y0:y1, x0:x1].astype(np.uint8)
+        verts_x = verts[:, 0].astype(int)
+        verts_y = verts[:, 1].astype(int)
+        # bbox_crop[verts_x, verts_y] = (220, 120, 120)
+        plt.imshow(bbox_crop)
+        plt.plot(verts_x, verts_y, "r.")
+        plt.show()
+
         # normalize verts to (-1, 1)
-        bbox_size = max(y1-y0, x1-x0)
+        bbox_size = max(y1 - y0, x1 - x0)
         half_size = bbox_size / 2
         verts[:, 0] = (verts[:, 0] - half_size) / half_size
         verts[:, 1] = (verts[:, 1] - half_size) / half_size
@@ -154,16 +172,24 @@ class Pytorch3dRenderer(object):
 
         # set color
         mesh_color = self.mesh_color.repeat(1, verts.shape[0], 1)
-        textures = Textures(verts_rgb = mesh_color)
+        textures = Textures(verts_rgb=mesh_color)
 
         # rendering
         mesh = Meshes(verts=verts_tensor, faces=faces_tensor, textures=textures)
 
+        breakpoint()
         # blending rendered mesh with background image
         rend_img = renderer(mesh)
         rend_img = rend_img[0].cpu().numpy()
+        # test
+        import matplotlib.pyplot as plt
 
+        rend_img = rend_img / (rend_img.max()) * 255
+        rend_img = rend_img.astype(np.uint8)
+        plt.imshow(rend_img)
+        plt.show()
 
+        # Render size 700
         scale_ratio = render_size / bbox_size
         img_size_new = int(self.img_size * scale_ratio)
         bg_img_new = cv2.resize(bg_img, (img_size_new, img_size_new))
@@ -173,8 +199,8 @@ class Pytorch3dRenderer(object):
         x1 = min(int(x1 * scale_ratio), img_size_new)
         y1 = min(int(y1 * scale_ratio), img_size_new)
 
-        h0 = min(y1-y0, render_size)
-        w0 = min(x1-x0, render_size)
+        h0 = min(y1 - y0, render_size)
+        w0 = min(x1 - x0, render_size)
 
         y1 = y0 + h0
         x1 = x0 + w0
@@ -184,16 +210,52 @@ class Pytorch3dRenderer(object):
         rend_img = rend_img_new
 
         alpha = rend_img[:, :, 3:4]
-        alpha[alpha>0] = 1.0
-        
+        alpha[alpha > 0] = 1.0
 
-        rend_img = rend_img[:, :, :3] 
+        rend_img = rend_img[:, :, :3]
         maxColor = rend_img.max()
-        rend_img *= 255 /maxColor #Make sure <1.0
+        rend_img *= 255 / maxColor  # Make sure <1.0
         rend_img = rend_img[:, :, ::-1]
 
         res_img = alpha * rend_img + (1.0 - alpha) * bg_img_new
 
+        # Test
+        breakpoint()
+        print("new X0: ", x0)
+        print("new verts: ", verts[:4])
+        for m in mesh.verts_list():
+            # m = m.cpu().numpy()
+            m = verts
+            # m[:, :2] *= -1  # Reverse what we've done above for pytorch3d
+            # m[:, 0] = (m[:, 0] + 1) / (1 + 1) * (x1 - x0) + x0
+            # m[:, 1] = (m[:, 1] + 1) / (1 + 1) * (y1 - y0) + y0
+            m = m.astype(int)
+            black = 255 * np.ones_like(res_img)
+            black[m[:, 1], m[:, 0]] = 0
+            res_img = res_img * 0.5 + 0.5 * black
+
+        plt.imshow(res_img.astype(np.uint8)[..., ::-1])
+        plt.show()
+
+        white = np.zeros_like(res_img)
+        white[int(y0) : int(y1), int(x0) : int(x1)] = 255
+        # Test
+        import matplotlib.pyplot as plt
+
+        res_img = res_img * 0.7 + 0.3 * white
+        plt.imshow(res_img.astype(np.uint8)[..., ::-1])
+        plt.show()
+
         res_img = cv2.resize(res_img, (self.img_size, self.img_size))
+
+        # Transform mesh points
+        breakpoint()
+        for m in mesh.verts_list():
+
+            # As above and add
+            m[:, 0] *= self.img_size / res_img.shape[1]
+            m[:, 1] *= self.img_size / res_img.shape[0]
+
+            m = m.astype(int)
 
         return res_img
