@@ -229,10 +229,10 @@ def run_frank_mocap(args, bbox_detector, body_mocap, hand_mocap, visualizer):
         verts_u_int = verts_u_float.astype(int)
         verts_v_int = verts_v_float.astype(int)
 
-        # Visualize the mesh projected onto the original image
-        plt.imshow(img_original_bgr.astype(np.uint8))
-        plt.plot(verts_u_int, verts_v_int, "r.")
-        plt.show()
+        ## Visualize the mesh projected onto the original image
+        # plt.imshow(img_original_bgr.astype(np.uint8))
+        # plt.plot(verts_u_int, verts_v_int, "r.")
+        # plt.show()
         # B4 the 3D reconstruction
         b4_img = img_original_bgr.copy()
         b4_img[verts_v_int, verts_v_int] = (120, 50, 50)  # Red
@@ -252,7 +252,7 @@ def run_frank_mocap(args, bbox_detector, body_mocap, hand_mocap, visualizer):
         # Plot only the camera-facing side of the pointcloud
         front_mesh_vertices = open3d.utility.Vector3dVector(vertices)
         front_mesh_pcl = open3d.geometry.PointCloud(front_mesh_vertices)
-        open3d.visualization.draw_geometries([front_mesh_pcl, o3d_frame, zero_z_plane])
+        # open3d.visualization.draw_geometries([front_mesh_pcl, o3d_frame, zero_z_plane])
 
         #############################################3
         # Investigate the depth
@@ -282,11 +282,11 @@ def run_frank_mocap(args, bbox_detector, body_mocap, hand_mocap, visualizer):
         kinect_pcl = open3d.geometry.PointCloud(
             open3d.utility.Vector3dVector(kinect_XYZ_points.T)  # Need to transpose
         )
-        open3d.visualization.draw_geometries([o3d_frame, zero_z_plane, kinect_pcl])
+        # open3d.visualization.draw_geometries([o3d_frame, zero_z_plane, kinect_pcl])
 
         #######################################3
         # Obtain XYZ w.r.t the camera world from the Frankmocap result
-        flength = 5000  # Imagine a large focal length
+        flength = 613  # Imagine a large focal length
         print(
             f"\n------> Imagine a long focal length {flength}, convert UV1 to XYZ w.r.t the world"
         )
@@ -306,51 +306,84 @@ def run_frank_mocap(args, bbox_detector, body_mocap, hand_mocap, visualizer):
         )  # N x 3
         pcl_w = open3d.utility.Vector3dVector(verts_XYZ_w)
         pcl_w = open3d.geometry.PointCloud(pcl_w)
-        open3d.visualization.draw_geometries([pcl_w])
+        # open3d.visualization.draw_geometries([pcl_w])
 
+        # breakpoint()
+        ## Project back XYZ to the image frame
+        # print("------> Project back to the image frame")
+        # verts_xyz_cam = K @ verts_XYZ_w.T  # 3 x N
+        # verts_uv1_img = verts_xyz_cam / verts_xyz_cam[2, :]  # 3 x N
+        # verts_u = verts_uv1_img[0, :].astype(int)
+        # verts_v = verts_uv1_img[1, :].astype(int)
+
+        # plt.imshow(img_original_bgr.astype(np.uint8))
+        # plt.plot(verts_u, verts_v, "r.")
+        # plt.title("Reprojection from XYZ_w to Image")
+        # plt.show()
+
+        # after_img = img_original_bgr.copy()
+        # after_img[verts_v, verts_u] = (20, 120, 20)
+
+        # blended_img = b4_img * 0.4 + after_img * 0.6
+        # plt.imshow(blended_img.astype(np.uint8)[...,::-1])
+        # plt.title("Diffence between before and after the 3D reconstruction")
+        # plt.show()
+
+        ########################################################
+        # Find the correct scale. kinect_pcl = alpha * pcl_w
+        # kinect_XYZ_points = alpha * verts_XYZ_w
         breakpoint()
-        # Project back XYZ to the image frame
-        print("------> Project back to the image frame")
-        verts_xyz_cam = K @ verts_XYZ_w.T  # 3 x N
-        verts_uv1_img = verts_xyz_cam / verts_xyz_cam[2, :]  # 3 x N
-        verts_u = verts_uv1_img[0, :].astype(int)
-        verts_v = verts_uv1_img[1, :].astype(int)
-        plt.imshow(img_original_bgr.astype(np.uint8))
-        plt.plot(verts_u, verts_v, "r.")
-        plt.title("Reprojection from XYZ_w to Image")
-        plt.show()
-        after_img = img_original_bgr.copy()
-        after_img[verts_v, verts_u] = (20, 120, 20)
+        # alphas = kinect_XYZ_points / verts_XYZ_w.T
+        alphas = kinect_XYZ_points[2, :] / verts_XYZ_w[:, 2]
+        print(
+            "[Info] Alphas stats: \n Mean: ",
+            np.mean(alphas),
+            "\nStd: ",
+            np.std(alphas),
+            "| median: ",
+            np.median(alphas),
+        )
+        print("[Info] Examples: ", alphas[:10])
+        # Test this alpha by scaling the pcl_w by 1/alpha and project the two pointclouds onto the space
+        # scaled_verts_XYZ_w = verts_XYZ_w * np.mean(alphas)
+        scaled_verts_XYZ_w = verts_XYZ_w * np.median(alphas)
+        scaled_pcl_w = open3d.utility.Vector3dVector(scaled_verts_XYZ_w)
+        scaled_pcl_w = open3d.geometry.PointCloud(scaled_pcl_w)
 
-        blended_img = b4_img - after_img
-        plt.imshow(blended_img)
-        plt.title("Diffence between before and after the 3D reconstruction")
-        plt.show()
-
-        # Now, scale the point cloud by some factor, let's say 1000
-        print("\n------> Now, scale the point cloud by some factor, let's say 1000")
-        verts_XYZ_w *= 1000
-        pcl_w = open3d.utility.Vector3dVector(verts_XYZ_w)
-        pcl_w = open3d.geometry.PointCloud(pcl_w)
-        open3d.visualization.draw_geometries([pcl_w, o3d_frame, zero_z_plane])
+        ## Now, scale the point cloud by some factor, let's say 1000
+        # print("\n------> Now, scale the point cloud by some factor, let's say 1000")
+        # verts_XYZ_w *= 1000
+        # pcl_w = open3d.utility.Vector3dVector(verts_XYZ_w)
+        # pcl_w = open3d.geometry.PointCloud(pcl_w)
+        # open3d.visualization.draw_geometries([pcl_w, o3d_frame, zero_z_plane])
 
         print(
             "\n------> Now, I put the scaled pointcloud alongside with the kinect one"
         )
+        # Paint colors for pointclouds
+        kinect_pcl.paint_uniform_color(
+            np.array([0.5, 0.5, 0.5]).reshape([3, 1])
+        )  # white
+        scaled_pcl_w.paint_uniform_color(
+            np.array([0.9, 0.2, 0.3]).reshape([3, 1])
+        )  # Red
+        pcl_w.paint_uniform_color(np.array([0.2, 0.2, 0.9]).reshape([3, 1]))  # Red
         open3d.visualization.draw_geometries(
-            [pcl_w, o3d_frame, zero_z_plane, kinect_pcl]
+            [scaled_pcl_w, o3d_frame, zero_z_plane, kinect_pcl]
+            # [o3d_frame, kinect_pcl, pcl_w]
         )
 
-        breakpoint()
-        # Project back XYZ to the image frame to ensure that the XYZ calculation using the Frankmocap works
-        print("------> Project back to the image frame")
-        verts_xyz_cam = K @ verts_XYZ_w.T  # 3 x N
+        # breakpoint()
+        ## Project back XYZ to the image frame to ensure that the XYZ calculation using the Frankmocap works
+        print("------> Project back the scaled PCL to the image frame")
+        verts_xyz_cam = K @ scaled_verts_XYZ_w.T  # 3 x N
         verts_uv1_img = verts_xyz_cam / verts_xyz_cam[2, :]  # 3 x N
         verts_u = verts_uv1_img[0, :].astype(int)
         verts_v = verts_uv1_img[1, :].astype(int)
         plt.imshow(img_original_bgr.astype(np.uint8))
         plt.plot(verts_u, verts_v, "r.")
-        plt.title("Reprojection from XYZ_w to Image")
+        plt.plot(verts_u_int, verts_v_int, "b.")
+        plt.title("Reprojection from scaled XYZ_w to Image")
         plt.show()
 
         print(f"Processed : {image_path}")
