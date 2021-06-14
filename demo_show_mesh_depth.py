@@ -380,9 +380,10 @@ def run_frank_mocap(args, bbox_detector, body_mocap, hand_mocap, visualizer):
         verts_uv1_img = verts_xyz_cam / verts_xyz_cam[2, :]  # 3 x N
         verts_u = verts_uv1_img[0, :].astype(int)
         verts_v = verts_uv1_img[1, :].astype(int)
-        plt.imshow(img_original_bgr.astype(np.uint8))
+        plt.imshow(img_original_bgr.astype(np.uint8)[..., ::-1])
         plt.plot(verts_u, verts_v, "r.")
         plt.plot(verts_u_int, verts_v_int, "b.")
+        plt.legend(["Red: frankmocap reprojection", "Blue: original"])
         plt.title("Reprojection from scaled XYZ_w to Image")
         plt.show()
 
