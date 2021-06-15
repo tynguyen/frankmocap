@@ -1,5 +1,6 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
-
+"""
+Extract joints predicted by Frankmocap alongside with their depth from Kinect
+"""
 import os
 import sys
 import os.path as osp
@@ -122,6 +123,7 @@ def run_regress(
         )
         assert len(hand_bbox_list) == len(pred_hand_list)
 
+    # DEBUG: what is this integeral_output_list
     # integration by copy-and-paste
     integral_output_list = integration_copy_paste(
         pred_body_list, pred_hand_list, body_mocap.smpl, img_original_bgr.shape
@@ -131,6 +133,23 @@ def run_regress(
 
 
 def run_frank_mocap(args, bbox_detector, body_mocap, hand_mocap, visualizer):
+    # Visualize the pointcloud
+    # Plot the Zero Z plane
+    zX, zY = np.meshgrid(range(-100, 1000), range(-100, 1000))
+    zX = zX.reshape(-1, 1)
+    zY = zY.reshape(-1, 1)
+    zZ = np.zeros_like(zX)
+    zero_z_plane = np.hstack([zX, zY, zZ])
+    zero_z_plane = open3d.geometry.PointCloud(
+        open3d.utility.Vector3dVector(zero_z_plane)
+    )
+    # Origin
+    o3d_frame = open3d.geometry.TriangleMesh.create_coordinate_frame(size=200)
+    o3d_vis = open3d.visualization.Visualizer()
+    o3d_vis.create_window()
+    o3d_vis.add_geometry(o3d_frame)
+    o3d_vis.add_geometry(zero_z_plane)
+
     # Setup input data to handle different types of inputs
     input_type, input_data, dmap_data = demo_utils.setup_input(args)
 
@@ -189,9 +208,12 @@ def run_frank_mocap(args, bbox_detector, body_mocap, hand_mocap, visualizer):
             assert False, "Unknown input_type"
 
         cur_frame += 1
+        cur_frame_id = image_path.split("/")[-1].split(".")[0]  # name of the image file
+
         if img_original_bgr is None or cur_frame > args.end_frame:
             break
         print("--------------------------------------")
+        print(f"[Debug] SOurce Img: {image_path}")
 
         # bbox detection
         if not load_bbox:
@@ -219,13 +241,20 @@ def run_frank_mocap(args, bbox_detector, body_mocap, hand_mocap, visualizer):
             continue
 
         pred_mesh_list = demo_utils.extract_mesh_from_output(pred_output_list)
+
         # TODO: handle multiple meshes
         # Now, just assume there is only one good mesh
         # Furthermore, we're ignoring vertices that are not facing the camera
-        vertices = pred_mesh_list[0]["vertices"]
+        vertices = pred_mesh_list[0]["vertices"].copy()
         vertices = vertices[np.where(vertices[:, 2] <= 0)]
         verts_u_float = vertices[:, 0]
         verts_v_float = vertices[:, 1]
+
+        # TODO: debug this step. why verts_u_int can be out of the image
+        # For now, just simply prevent this happen
+        verts_u_float[np.where(verts_u_float >= dmap.shape[1])] = dmap.shape[1] - 1
+        verts_v_float[np.where(verts_v_float >= dmap.shape[0])] = dmap.shape[0] - 1
+
         verts_u_int = verts_u_float.astype(int)
         verts_v_int = verts_v_float.astype(int)
 
@@ -237,37 +266,24 @@ def run_frank_mocap(args, bbox_detector, body_mocap, hand_mocap, visualizer):
         b4_img = img_original_bgr.copy()
         b4_img[verts_v_int, verts_v_int] = (120, 50, 50)  # Red
 
-        # Visualize the pointcloud
-        # Plot the Zero Z plane
-        zX, zY = np.meshgrid(range(-100, 1000), range(-100, 1000))
-        zX = zX.reshape(-1, 1)
-        zY = zY.reshape(-1, 1)
-        zZ = np.zeros_like(zX)
-        zero_z_plane = np.hstack([zX, zY, zZ])
-        zero_z_plane = open3d.geometry.PointCloud(
-            open3d.utility.Vector3dVector(zero_z_plane)
-        )
-        # Origin
-        o3d_frame = open3d.geometry.TriangleMesh.create_coordinate_frame(size=200)
         # Plot only the camera-facing side of the pointcloud
         front_mesh_vertices = open3d.utility.Vector3dVector(vertices)
         front_mesh_pcl = open3d.geometry.PointCloud(front_mesh_vertices)
-        open3d.visualization.draw_geometries([front_mesh_pcl, o3d_frame, zero_z_plane])
+        # open3d.visualization.draw_geometries([front_mesh_pcl, o3d_frame, zero_z_plane])
 
         #############################################3
         # Investigate the depth
-        breakpoint()
         K_kinect = np.array(
-            [[613.095, 0, 636.84], [0, 612.806, 368.059], [0, 0, 1],]
+            [[611.99, 0, 612.067], [0, 637.85, 372.33], [0, 0, 1],]
         )  # Obtained from Kinect's factory calib and correspond to 720p images
         print("\n------> Visualize the pointcloud obtained from the depthmap")
         # u, v should be the same as those of the fankmocap
-        kinect_verts_u_int = verts_u_int  # integer
-        kinect_verts_v_int = verts_v_int  # integer
+        kinect_verts_u_int = verts_u_int.copy()  # integer
+        kinect_verts_v_int = verts_v_int.copy()  # integer
         kinect_verts_z = dmap[kinect_verts_v_int, kinect_verts_u_int]
         # u, v float values
-        kinect_verts_u_float = verts_u_float.reshape([1, -1])
-        kinect_verts_v_float = verts_v_float.reshape([1, -1])
+        kinect_verts_u_float = verts_u_float.copy().reshape([1, -1])
+        kinect_verts_v_float = verts_v_float.copy().reshape([1, -1])
 
         kinect_uv1_points = np.vstack(
             [
@@ -279,123 +295,35 @@ def run_frank_mocap(args, bbox_detector, body_mocap, hand_mocap, visualizer):
         kinect_xyz_points = kinect_verts_z * kinect_uv1_points  # 3 x N
         kinect_XYZ_points = np.linalg.inv(K_kinect) @ kinect_xyz_points  # 3 x N
         # Visualize these XYZ points
-        kinect_pcl = open3d.geometry.PointCloud(
+        kinect_pcl_ = open3d.geometry.PointCloud(
             open3d.utility.Vector3dVector(kinect_XYZ_points.T)  # Need to transpose
         )
-        # open3d.visualization.draw_geometries([o3d_frame, zero_z_plane, kinect_pcl])
+        print(f"[Debug] Kinect_pct: {np.array(kinect_pcl.points)[:2]}")
+        if cur_frame > args.start_frame + 1:
+            print(f"[Debug] cur_frame > start_frame. Updating the pcl")
+            kinect_pcl.points = kinect_pcl_.points
+            o3d_vis.update_geometry(kinect_pcl)
+            o3d_vis.update_renderer()
+            o3d_vis.poll_events()
+        elif cur_frame == args.start_frame + 1:
+            print(f"[Debug] cur_frame == start_frame. Just add the pcl")
+            kinect_pcl = kinect_pcl_
+            o3d_vis.add_geometry(kinect_pcl)
 
-        #######################################3
-        # Obtain XYZ w.r.t the camera world from the Frankmocap result
-        flength = 613  # Imagine a large focal length
-        print(
-            f"\n------> Imagine a long focal length {flength}, convert UV1 to XYZ w.r.t the world"
-        )
-        img_h, img_w = img_original_bgr.shape[:2]
-        py, px = img_h / 2.0, img_w / 2.0
-        K = np.array([[flength, 0, px], [0, flength, py], [0, 0, 1],])
+        o3d_vis.capture_screen_image("tmp/temp_%s.jpg" % cur_frame_id)
 
-        verts_X_w = (verts_u_float - img_w / 2) * 1.0 / flength
-        verts_Y_w = (verts_v_float - img_h / 2) * 1.0 / flength
-        verts_Z_w = (vertices[:, 2] * 1.0 / flength) + 1
-        verts_XYZ_w = np.hstack(
-            [
-                verts_X_w.reshape([-1, 1]),
-                verts_Y_w.reshape([-1, 1]),
-                verts_Z_w.reshape([-1, 1]),
-            ]
-        )  # N x 3
-        pcl_w = open3d.utility.Vector3dVector(verts_XYZ_w)
-        pcl_w = open3d.geometry.PointCloud(pcl_w)
-        # open3d.visualization.draw_geometries([pcl_w])
-
-        # breakpoint()
-        ## Project back XYZ to the image frame
-        # print("------> Project back to the image frame")
-        # verts_xyz_cam = K @ verts_XYZ_w.T  # 3 x N
-        # verts_uv1_img = verts_xyz_cam / verts_xyz_cam[2, :]  # 3 x N
-        # verts_u = verts_uv1_img[0, :].astype(int)
-        # verts_v = verts_uv1_img[1, :].astype(int)
-
-        # plt.imshow(img_original_bgr.astype(np.uint8))
-        # plt.plot(verts_u, verts_v, "r.")
-        # plt.title("Reprojection from XYZ_w to Image")
-        # plt.show()
-
-        # after_img = img_original_bgr.copy()
-        # after_img[verts_v, verts_u] = (20, 120, 20)
-
-        # blended_img = b4_img * 0.4 + after_img * 0.6
-        # plt.imshow(blended_img.astype(np.uint8)[...,::-1])
-        # plt.title("Diffence between before and after the 3D reconstruction")
-        # plt.show()
-
-        ########################################################
-        # Find the correct scale. kinect_pcl = alpha * pcl_w
-        # kinect_XYZ_points = alpha * verts_XYZ_w
-        breakpoint()
-        # alphas = kinect_XYZ_points / verts_XYZ_w.T
-        alphas = kinect_XYZ_points[2, :] / verts_XYZ_w[:, 2]
-        print(
-            "[Info] Alphas stats: \n Mean: ",
-            np.mean(alphas),
-            "\nStd: ",
-            np.std(alphas),
-            "| median: ",
-            np.median(alphas),
-        )
-        print("[Info] Examples: ", alphas[:10])
-        # Test this alpha by scaling the pcl_w by 1/alpha and project the two pointclouds onto the space
-        # scaled_verts_XYZ_w = verts_XYZ_w * np.mean(alphas)
-        scaled_verts_XYZ_w = verts_XYZ_w * np.median(alphas)
-        scaled_pcl_w = open3d.utility.Vector3dVector(scaled_verts_XYZ_w)
-        scaled_pcl_w = open3d.geometry.PointCloud(scaled_pcl_w)
-
-        ## Now, scale the point cloud by some factor, let's say 1000
-        # print("\n------> Now, scale the point cloud by some factor, let's say 1000")
-        # verts_XYZ_w *= 1000
-        # pcl_w = open3d.utility.Vector3dVector(verts_XYZ_w)
-        # pcl_w = open3d.geometry.PointCloud(pcl_w)
-        # open3d.visualization.draw_geometries([pcl_w, o3d_frame, zero_z_plane])
-
-        print(
-            "\n------> Now, I put the scaled pointcloud alongside with the kinect one"
-        )
-        # Paint colors for pointclouds
-        kinect_pcl.paint_uniform_color(
-            np.array([0.5, 0.5, 0.5]).reshape([3, 1])
-        )  # white
-        scaled_pcl_w.paint_uniform_color(
-            np.array([0.9, 0.2, 0.3]).reshape([3, 1])
-        )  # Red
-        pcl_w.paint_uniform_color(np.array([0.2, 0.2, 0.9]).reshape([3, 1]))  # Red
-        open3d.visualization.draw_geometries(
-            [scaled_pcl_w, o3d_frame, zero_z_plane, kinect_pcl]
-            # [o3d_frame, kinect_pcl, pcl_w]
-        )
-
-        # breakpoint()
-        ## Project back XYZ to the image frame to ensure that the XYZ calculation using the Frankmocap works
-        print("------> Project back the scaled PCL to the image frame")
-        verts_xyz_cam = K @ scaled_verts_XYZ_w.T  # 3 x N
-        verts_uv1_img = verts_xyz_cam / verts_xyz_cam[2, :]  # 3 x N
-        verts_u = verts_uv1_img[0, :].astype(int)
-        verts_v = verts_uv1_img[1, :].astype(int)
-        plt.imshow(img_original_bgr.astype(np.uint8)[..., ::-1])
-        plt.plot(verts_u, verts_v, "r.")
-        plt.plot(verts_u_int, verts_v_int, "b.")
-        plt.legend(["Red: frankmocap reprojection", "Blue: original"])
-        plt.title("Reprojection from scaled XYZ_w to Image")
-        plt.show()
-
+        # Save this kinect point cloud
+        kinect_pcl_path = os.path.join(args.out_dir, cur_frame_id + ".pcd")
+        open3d.io.write_point_cloud(kinect_pcl_path, kinect_pcl)
+        print(f"[Info] Written kinect pcl to file {kinect_pcl_path}")
         print(f"Processed : {image_path}")
-
-    # save images as a video
-    if not args.no_video_out and input_type in ["video", "webcam"]:
-        demo_utils.gen_video_out(args.out_dir, args.seq_name)
+        # TODO: remove
+        # cur_frame += 40
 
     if input_type == "webcam" and input_data is not None:
         input_data.release()
     cv2.destroyAllWindows()
+    o3d_vis.destroy_window()
 
 
 def main():
