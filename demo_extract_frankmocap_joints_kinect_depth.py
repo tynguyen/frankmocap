@@ -241,6 +241,14 @@ def run_frank_mocap(args, bbox_detector, body_mocap, hand_mocap, visualizer):
             continue
 
         pred_mesh_list = demo_utils.extract_mesh_from_output(pred_output_list)
+        # Save meshes
+        breakpoint()
+        raw_mesh_path = os.path.join(args.out_dir, cur_frame_id + ".obj")
+        raw_vertices = open3d.utility.Vector3dVector(pred_mesh_list[0]["vertices"])
+        raw_faces = open3d.utility.Vector3iVector(pred_mesh_list[0]["faces"])
+        raw_mesh = open3d.geometry.TriangleMesh(raw_vertices, raw_faces)
+        open3d.io.write_triangle_mesh(raw_mesh_path, raw_mesh)
+        print(f"[Info] Written raw mesh to file {raw_mesh_path}")
 
         # TODO: handle multiple meshes
         # Now, just assume there is only one good mesh
@@ -298,7 +306,7 @@ def run_frank_mocap(args, bbox_detector, body_mocap, hand_mocap, visualizer):
         kinect_pcl_ = open3d.geometry.PointCloud(
             open3d.utility.Vector3dVector(kinect_XYZ_points.T)  # Need to transpose
         )
-        print(f"[Debug] Kinect_pct: {np.array(kinect_pcl.points)[:2]}")
+        print(f"[Debug] Kinect_pct: {np.array(kinect_pcl_.points)[:2]}")
         if cur_frame > args.start_frame + 1:
             print(f"[Debug] cur_frame > start_frame. Updating the pcl")
             kinect_pcl.points = kinect_pcl_.points

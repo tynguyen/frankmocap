@@ -18,6 +18,13 @@ There are two ways to run the demos
 * Install this package
 * Copy demo files from docs/ to the main repository
 
+## Get the Depth Map from Frankmocap
+We want to obtain the depth map from the frankmocap map and compare that with the kinect  depth map to figure out the scale of the frankmocap depth.
+
+```
+python -m pdb  demo_get_dmap_from_frankmocap.py --input_path ~/bags/room_record/person_action_kinect/color --dmap_path ~/bags/room_record/person_action_kinect/depth --start_frame 0 --out_dir ~/bags/room_record/person_action_kinect_frankmocap_get_dmap --renderer pytorch3d
+```
+
 ## Showing Mesh on the Depth Map Demo
 ```
 python -d demo_show_mesh_depth.py --input_path ~/bags/kinect_record/record_extracted/color --out_dir ~/bags/kinect_record/frankmocap_bodytracking --renderer_type pytorch3d --start_frame 600 --dmap_path ~/bags/kinect_record/record_extracted/depth

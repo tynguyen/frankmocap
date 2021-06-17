@@ -25,7 +25,8 @@ from pytorch3d.renderer import (
 
 
 class Pytorch3dRenderer(object):
-    def __init__(self, img_size, mesh_color):
+    def __init__(self, img_size, mesh_color, is_get_dmap=False):
+        self.is_get_dmap = is_get_dmap  # return depth map?
         self.device = torch.device("cuda:0")
         # self.render_size = 1920
 
@@ -68,7 +69,7 @@ class Pytorch3dRenderer(object):
         self.renderer_small = self.__get_renderer(self.render_size_small, lights)
 
     def __get_renderer(self, render_size, lights):
-
+        self.min_z = 0.1  # same as znear used in the cameras model
         cameras = FoVOrthographicCameras(
             device=self.device,
             znear=0.1,
@@ -85,8 +86,11 @@ class Pytorch3dRenderer(object):
         )
         blend_params = BlendParams(sigma=1e-4, gamma=1e-4, background_color=(0, 0, 0))
 
+        self.rasterizer = MeshRasterizer(
+            cameras=cameras, raster_settings=raster_settings
+        )
         renderer = MeshRenderer(
-            rasterizer=MeshRasterizer(cameras=cameras, raster_settings=raster_settings),
+            rasterizer=(self.rasterizer),
             shader=SoftPhongShader(
                 device=self.device,
                 cameras=cameras,
@@ -144,14 +148,13 @@ class Pytorch3dRenderer(object):
         verts[:, 1] -= y0
 
         # Test
-        breakpoint()
         bbox_crop = bg_img[y0:y1, x0:x1].astype(np.uint8)
         verts_x = verts[:, 0].astype(int)
         verts_y = verts[:, 1].astype(int)
         # bbox_crop[verts_x, verts_y] = (220, 120, 120)
-        plt.imshow(bbox_crop)
-        plt.plot(verts_x, verts_y, "r.")
-        plt.show()
+        # plt.imshow(bbox_crop)
+        # plt.plot(verts_x, verts_y, "r.")
+        # plt.show()
 
         # normalize verts to (-1, 1)
         bbox_size = max(y1 - y0, x1 - x0)
@@ -174,20 +177,34 @@ class Pytorch3dRenderer(object):
         mesh_color = self.mesh_color.repeat(1, verts.shape[0], 1)
         textures = Textures(verts_rgb=mesh_color)
 
-        # rendering
+        # rendering mesh
         mesh = Meshes(verts=verts_tensor, faces=faces_tensor, textures=textures)
 
-        breakpoint()
+        # rendering depth map size 200 x 200, float 32 bit
+        mesh_dmap = self.rasterizer(mesh).zbuf.cpu().squeeze().numpy()
+        # Convert to uint16
+        mesh_dmap[np.where(mesh_dmap < self.min_z)] = 0
+        mesh_dmap = mesh_dmap / mesh_dmap.max() * 65535
+        mesh_dmap = mesh_dmap.astype(np.uint16)
+        # mesh_dmap = mesh_dmap / mesh_dmap.max() * 255
+        # mesh_dmap = mesh_dmap.astype(np.uint8)
+        # import matplotlib.pyplot as plt
+
+        # plt.imshow(mesh_dmap)
+        # plt.title("Rended Dmap")
+        # plt.show()
+
         # blending rendered mesh with background image
         rend_img = renderer(mesh)
         rend_img = rend_img[0].cpu().numpy()
-        # test
-        import matplotlib.pyplot as plt
 
         rend_img = rend_img / (rend_img.max()) * 255
         rend_img = rend_img.astype(np.uint8)
-        plt.imshow(rend_img)
-        plt.show()
+        import matplotlib.pyplot as plt
+
+        # plt.imshow(rend_img)
+        # plt.title("Rended Image")
+        # plt.show()
 
         # Render size 700
         scale_ratio = render_size / bbox_size
@@ -204,7 +221,6 @@ class Pytorch3dRenderer(object):
 
         y1 = y0 + h0
         x1 = x0 + w0
-
         rend_img_new = np.zeros((img_size_new, img_size_new, 4))
         rend_img_new[y0:y1, x0:x1, :] = rend_img[:h0, :w0, :]
         rend_img = rend_img_new
@@ -219,43 +235,33 @@ class Pytorch3dRenderer(object):
 
         res_img = alpha * rend_img + (1.0 - alpha) * bg_img_new
 
-        # Test
-        breakpoint()
-        print("new X0: ", x0)
-        print("new verts: ", verts[:4])
-        for m in mesh.verts_list():
-            # m = m.cpu().numpy()
-            m = verts
-            # m[:, :2] *= -1  # Reverse what we've done above for pytorch3d
-            # m[:, 0] = (m[:, 0] + 1) / (1 + 1) * (x1 - x0) + x0
-            # m[:, 1] = (m[:, 1] + 1) / (1 + 1) * (y1 - y0) + y0
-            m = m.astype(int)
-            black = 255 * np.ones_like(res_img)
-            black[m[:, 1], m[:, 0]] = 0
-            res_img = res_img * 0.5 + 0.5 * black
+        #################
+        # Get the depth map image of the same size
+        mesh_dmap = cv2.resize(mesh_dmap, (render_size, render_size))
+        rend_dmap_new = np.zeros((img_size_new, img_size_new, 1))
+        rend_dmap_new[y0:y1, x0:x1, :] = mesh_dmap[:h0, :w0][..., None]
+        mesh_dmap = rend_dmap_new
 
-        plt.imshow(res_img.astype(np.uint8)[..., ::-1])
-        plt.show()
-
-        white = np.zeros_like(res_img)
-        white[int(y0) : int(y1), int(x0) : int(x1)] = 255
-        # Test
         import matplotlib.pyplot as plt
 
-        res_img = res_img * 0.7 + 0.3 * white
-        plt.imshow(res_img.astype(np.uint8)[..., ::-1])
-        plt.show()
+        # plt.imshow(mesh_dmap)
+        # plt.title("Mesh Depth Map after Resizing")
+        # plt.show()
+
+        # Debug: Show res image and depth image at the same time
+        # breakpoint()
+        # depth_8bit = mesh_dmap / mesh_dmap.max() * 255
+        # depth_8bit = depth_8bit.astype(np.uint8)
+        # depth_8bit = np.concatenate([depth_8bit, depth_8bit, depth_8bit], -1)
+        # depth_vs_img = np.hstack([res_img.astype(np.uint8)[..., ::-1], depth_8bit])
+        # plt.imshow(depth_vs_img)
+        # plt.title("Depth vs Res Img")
+        # plt.show()
 
         res_img = cv2.resize(res_img, (self.img_size, self.img_size))
+        mesh_dmap = cv2.resize(mesh_dmap, (self.img_size, self.img_size))
 
-        # Transform mesh points
-        breakpoint()
-        for m in mesh.verts_list():
-
-            # As above and add
-            m[:, 0] *= self.img_size / res_img.shape[1]
-            m[:, 1] *= self.img_size / res_img.shape[0]
-
-            m = m.astype(int)
-
-        return res_img
+        if self.is_get_dmap:
+            return res_img, mesh_dmap
+        else:
+            return res_img

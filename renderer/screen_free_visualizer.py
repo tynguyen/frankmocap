@@ -46,7 +46,7 @@ colors = {
 
 
 class Visualizer(object):
-    def __init__(self, renderer_backend):
+    def __init__(self, renderer_backend, is_get_dmap=False):
         self.input_size = 1920
 
         # set-up renderer
@@ -57,8 +57,11 @@ class Visualizer(object):
             )
         else:
             self.renderer = Pytorch3dRenderer(
-                img_size=self.input_size, mesh_color=colors["light_purple"]
+                img_size=self.input_size,
+                mesh_color=colors["light_purple"],
+                is_get_dmap=is_get_dmap,
             )
+        self.is_get_dmap = is_get_dmap
 
     def __render_pred_verts(self, img_original, pred_mesh_list):
         assert (
@@ -71,38 +74,44 @@ class Visualizer(object):
         # 1920 x 1920 canvas
         rend_img[:h, :w, :] = img_original
 
-        breakpoint()
-        # Visualize the vertices
-        verts = pred_mesh_list[0]["vertices"]
-        faces = pred_mesh_list[0]["faces"]
-        mesh_verices = open3d.utility.Vector3dVector(verts)
-        mesh_faces = open3d.utility.Vector3iVector(faces)
-        o3d_mesh = open3d.geometry.TriangleMesh(mesh_verices, mesh_faces)
+        ## Visualize the vertices
+        # verts = pred_mesh_list[0]["vertices"]
+        # faces = pred_mesh_list[0]["faces"]
+        # mesh_verices = open3d.utility.Vector3dVector(verts)
+        # mesh_faces = open3d.utility.Vector3iVector(faces)
+        # o3d_mesh = open3d.geometry.TriangleMesh(mesh_verices, mesh_faces)
 
-        # Plot the Zero Z plane
-        zX, zY = np.meshgrid(range(-100, 1000), range(-100, 1000))
-        zX = zX.reshape(-1, 1)
-        zY = zY.reshape(-1, 1)
-        zZ = np.zeros_like(zX)
-        zero_z_plane = np.hstack([zX, zY, zZ])
-        zero_z_plane = open3d.geometry.PointCloud(
-            open3d.utility.Vector3dVector(zero_z_plane)
-        )
-        open3d.visualization.draw_geometries([o3d_mesh, zero_z_plane])
-        import matplotlib.pyplot as plt
+        ## Plot the Zero Z plane
+        # zX, zY = np.meshgrid(range(-100, 1000), range(-100, 1000))
+        # zX = zX.reshape(-1, 1)
+        # zY = zY.reshape(-1, 1)
+        # zZ = np.zeros_like(zX)
+        # zero_z_plane = np.hstack([zX, zY, zZ])
+        # zero_z_plane = open3d.geometry.PointCloud(
+        #    open3d.utility.Vector3dVector(zero_z_plane)
+        # )
 
-        verts_x = pred_mesh_list[0]["vertices"][:, 0].astype(int)
-        verts_y = pred_mesh_list[0]["vertices"][:, 1].astype(int)
-        plt.imshow(img_original.astype(np.uint8))
-        plt.plot(verts_x, verts_y, "r.")
-        plt.show()
+        # open3d.visualization.draw_geometries([o3d_mesh, zero_z_plane])
+
+        # verts_x = pred_mesh_list[0]["vertices"][:, 0].astype(int)
+        # verts_y = pred_mesh_list[0]["vertices"][:, 1].astype(int)
+
+        # plt.imshow(img_original.astype(np.uint8))
+        # plt.plot(verts_x, verts_y, "r.")
+        # plt.show()
 
         for mesh in pred_mesh_list:
             verts = mesh["vertices"]
             faces = mesh["faces"]
-            rend_img = self.renderer.render(verts, faces, rend_img)
-
+            if self.is_get_dmap:
+                rend_img, rend_dmap = self.renderer.render(verts, faces, rend_img)
+            else:
+                rend_img = self.renderer.render(verts, faces, rend_img)
         res_img = rend_img[:h, :w, :]
+        if self.is_get_dmap:
+            res_dmap = rend_dmap[:h, :w]
+            return res_img, res_dmap
+
         return res_img
 
     def visualize(
@@ -140,8 +149,12 @@ class Visualizer(object):
 
         # render predicted meshes
         if pred_mesh_list is not None:
-            rend_img = self.__render_pred_verts(input_img, pred_mesh_list)
+            if self.is_get_dmap:
+                rend_img, res_dmap = self.__render_pred_verts(input_img, pred_mesh_list)
+            else:
+                rend_img = self.__render_pred_verts(input_img, pred_mesh_list)
             res_img = np.concatenate((res_img, rend_img), axis=1)
             # res_img = rend_img
-
+        if self.is_get_dmap:
+            return res_img, res_dmap
         return res_img
