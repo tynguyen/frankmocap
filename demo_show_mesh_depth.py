@@ -136,6 +136,11 @@ def run_frank_mocap(args, bbox_detector, body_mocap, hand_mocap, visualizer):
     # Setup input data to handle different types of inputs
     input_type, input_data, dmap_data = demo_utils.setup_input(args)
 
+    #############################################3
+    K_kinect = np.array(
+        [[613.095, 0, 636.84], [0, 612.806, 368.059], [0, 0, 1],]
+    )  # Obtained from Kinect's factory calib and correspond to 720p images
+
     # Debug
     # Non-blocking visualization
     o3d_vis = open3d.visualization.Visualizer()
@@ -262,28 +267,61 @@ def run_frank_mocap(args, bbox_detector, body_mocap, hand_mocap, visualizer):
         #    ImShow(res_img)
 
         # Get the depth scale by comparing the frankmocap dmap with that of the kinect
-        # DEBUG showing overlayed image of the two depth maps
         # Get indices
         dmap[np.where(res_dmap <= 0)] = 0  # Consider only points on the person
         valid_dmap_indices = np.where(res_dmap * dmap > 0)
         valid_dmap = dmap[valid_dmap_indices]
         valid_res_dmap = res_dmap[valid_dmap_indices]
+        # Reshift and rescale valid_dmap
+        reshifted_res_dmap = valid_res_dmap - 5
+        reshifted_res_dmap *= 112  # TODO:  for now, not consider *(-1)
 
-        scales = valid_dmap / valid_res_dmap
-        # plt.imshow(scales)
-        # plt.show()
+        # Now, transform this dmap to 3D using an orthographic camera model
+        valid_dmap_u = valid_dmap_indices[1]
+        valid_dmap_v = valid_dmap_indices[0]  # (133898, )
+
+        # Obtain XYZ w.r.t the camera world from the Frankmocap result
+        flength = 613  # Imagine a large focal length
+        print(
+            f"\n------> Imagine a long focal length {flength}, convert UV1 to XYZ w.r.t the world"
+        )
+        img_h, img_w = img_original_bgr.shape[:2]
+        py, px = img_h / 2.0, img_w / 2.0
+        K = np.array([[flength, 0, px], [0, flength, py], [0, 0, 1],])
+
+        res_dmap_X = (valid_dmap_u - img_w / 2) * 1.0 / flength
+        res_dmap_Y = (valid_dmap_v - img_w / 2) * 1.0 / flength
+        res_dmap_Z = (
+            reshifted_res_dmap * 1.0 / flength + 1  # + 112 * 5.0 / flength
+        )  # 112 and 5 are numbers used to shift and scale Z values in p3d_renderer.py
+        res_dmap_XYZ = np.hstack(
+            [
+                res_dmap_X.reshape([-1, 1]),
+                res_dmap_Y.reshape([-1, 1]),
+                res_dmap_Z.reshape([-1, 1]),
+            ]
+        )  # N x 3
+        # Obtain XYZ w.r.t the camera world from the Kinect depth map
+        kinect_dmap_uv1 = np.vstack(
+            [valid_dmap_u, valid_dmap_v, np.ones_like(valid_dmap_v)]
+        )
+        kinect_dmap_xyz = valid_dmap * kinect_dmap_uv1  # 3 x N
+        kinect_dmap_XYZ = np.linalg.inv(K_kinect) @ kinect_dmap_xyz  # 3 x N
+        # Get scale
+        scales = kinect_dmap_XYZ[2, :] / res_dmap_XYZ[:, 2]
         print(f"[Info] Scales stats: ")
         print(
             f"[Info] Mean: {np.mean(scales)}| Std: {np.std(scales)}| Median: {np.median(scales)}"
         )
         dmap_scale = np.median(scales)
-        scaled_res_dmap = res_dmap * dmap_scale
-        scaled_dmap_errors = scaled_res_dmap - dmap  # Error image
-        print(
-            f"[Info] Dmap Error: {np.mean(scaled_dmap_errors)}| Std: {np.std(scaled_dmap_errors)}| Median: {np.median(scaled_dmap_errors)}"
-        )
 
-        # Debug: show depth errors
+        # Debug: show depth errors using the scale obtained directly from depth map scaling
+        # dmap_scale = np.median(valid_dmap/valid_res_dmap)
+        # scaled_res_dmap = res_dmap * dmap_scale
+        # scaled_dmap_errors = scaled_res_dmap - dmap  # Error image
+        # print(
+        #    f"[Info] Dmap Error: {np.mean(scaled_dmap_errors)}| Std: {np.std(scaled_dmap_errors)}| Median: {np.median(scaled_dmap_errors)}"
+        # )
         # res_dmap_8bit = res_dmap / res_dmap.max() * 255
         # res_dmap_8bit = cv2.applyColorMap(res_dmap.astype(np.uint8), cv2.COLORMAP_JET)
         # kinect_dmap_8bit = dmap / dmap.max() * 255
@@ -338,22 +376,6 @@ def run_frank_mocap(args, bbox_detector, body_mocap, hand_mocap, visualizer):
         o3d_vis.add_geometry(zero_z_plane)
         # open3d.visualization.draw_geometries([front_mesh_pcl, o3d_frame, zero_z_plane])
 
-        #############################################3
-        K_kinect = np.array(
-            [[613.095, 0, 636.84], [0, 612.806, 368.059], [0, 0, 1],]
-        )  # Obtained from Kinect's factory calib and correspond to 720p images
-        K_ortho = np.array(
-            [
-                [
-                    [1.0, 0.0, 0.0, -0.0],
-                    [0.0, 1.0, 0.0, -0.0],
-                    [0.0, 0.0, 0.1010101, -0.01010101],
-                    [0.0, 0.0, 0.0, 1.0],
-                ]
-            ],
-            dtype=np.float32,
-        )
-
         #######################################3
         # Obtain XYZ w.r.t the camera world from the Frankmocap result
         vertices = pred_mesh_list[0]["vertices"]
@@ -365,17 +387,6 @@ def run_frank_mocap(args, bbox_detector, body_mocap, hand_mocap, visualizer):
         verts_uv1_float = np.vstack(
             [verts_u_float, verts_v_float, np.ones_like(verts_u_float)]
         )
-
-        # NOT WORKING YET
-        # fm_xyz_points = verts_z_float * verts_uv1_float  # 3 x N
-        # fm_XYZ_points = np.linalg.inv(K_ortho) @ fm_xyz_points  # 3 x N
-        # raw_mesh_path = os.path.join(args.out_dir, cur_frame_id + ".obj")
-        # raw_vertices = open3d.utility.Vector3dVector(fm_XYZ_points.T)
-        # raw_faces = open3d.utility.Vector3iVector(faces)
-        # raw_mesh = open3d.geometry.TriangleMesh(raw_vertices, raw_faces)
-        # open3d.io.write_triangle_mesh(raw_mesh_path, raw_mesh)
-        # print(f"[Info] Written raw mesh to file {raw_mesh_path}")
-        # NOT WORKING YET
 
         # Obtain XYZ w.r.t the camera world from the Frankmocap result
         flength = 613  # Imagine a large focal length
@@ -389,7 +400,7 @@ def run_frank_mocap(args, bbox_detector, body_mocap, hand_mocap, visualizer):
         verts_X_w = (verts_u_float - img_w / 2) * 1.0 / flength
         verts_Y_w = (verts_v_float - img_h / 2) * 1.0 / flength
         verts_Z_w = (
-            vertices[:, 2] * 1.0 / flength + 112 * 5.0 / flength
+            vertices[:, 2] * 1.0 / flength + 1  # 112 * 5.0 / flength
         )  # 112 and 5 are numbers used to shift and scale Z values in p3d_renderer.py
         verts_XYZ_w = np.hstack(
             [
@@ -399,7 +410,7 @@ def run_frank_mocap(args, bbox_detector, body_mocap, hand_mocap, visualizer):
             ]
         )  # N x 3
         # Scale up pcl
-        scaled_verts_XYZ_w = verts_XYZ_w * dmap_scale * flength / 112
+        scaled_verts_XYZ_w = verts_XYZ_w * dmap_scale  # * flength / 112
         scaled_verts = open3d.utility.Vector3dVector(scaled_verts_XYZ_w)
         scaled_faces = open3d.utility.Vector3iVector(faces)
         scaled_pcl_w = open3d.geometry.PointCloud(scaled_verts)
@@ -426,6 +437,8 @@ def run_frank_mocap(args, bbox_detector, body_mocap, hand_mocap, visualizer):
         )
 
         # Debug: display two PCL onto the space
+
+        # Get Kinect 3D points
         kinect_verts_u_int = verts_u_float.astype(int)  # integer
         kinect_verts_v_int = verts_v_float.astype(int)  # integer
         # Make sure nothing is out of bound
@@ -451,6 +464,7 @@ def run_frank_mocap(args, bbox_detector, body_mocap, hand_mocap, visualizer):
             np.array([0.5, 0.5, 0.5]).reshape([3, 1])
         )  # white
         # pcl_w.paint_uniform_color(np.array([0.9, 0.2, 0.3]).reshape([3, 1]))  # Red
+
         if cur_frame == args.start_frame + 1:
             scaled_pcl_w_ = scaled_pcl_w
             scaled_mesh_ = scaled_mesh
@@ -470,17 +484,18 @@ def run_frank_mocap(args, bbox_detector, body_mocap, hand_mocap, visualizer):
 
         # breakpoint()
         ## Project back XYZ to the image frame to ensure that the XYZ calculation using the Frankmocap works
-        # print("------> Project back the scaled PCL to the image frame")
-        # verts_xyz_cam = K @ scaled_verts_XYZ_w.T  # 3 x N
-        # verts_uv1_img = verts_xyz_cam / verts_xyz_cam[2, :]  # 3 x N
-        # verts_u = verts_uv1_img[0, :].astype(int)
-        # verts_v = verts_uv1_img[1, :].astype(int)
-        # plt.imshow(img_original_bgr.astype(np.uint8)[..., ::-1])
-        # plt.plot(verts_u, verts_v, "r.")
-        # plt.plot(verts_u_float.astype(int), verts_v_float.astype(int), "b.")
-        # plt.legend(["Red: frankmocap reprojection", "Blue: original"])
-        # plt.title("Reprojection from scaled XYZ_w to Image")
-        # plt.show()
+        print("------> Project back the scaled PCL to the image frame")
+        verts_xyz_cam = K @ scaled_verts_XYZ_w.T  # 3 x N
+        verts_uv1_img = verts_xyz_cam / verts_xyz_cam[2, :]  # 3 x N
+        verts_u = verts_uv1_img[0, :].astype(int)
+        verts_v = verts_uv1_img[1, :].astype(int)
+        plt.imshow(img_original_bgr.astype(np.uint8)[..., ::-1])
+        plt.plot(verts_u, verts_v, "r.")
+        plt.plot(verts_u_float.astype(int), verts_v_float.astype(int), "b.")
+        plt.legend(["Red: frankmocap reprojection", "Blue: original"])
+        plt.title("Reprojection from scaled XYZ_w to Image")
+        plt.axis("off")
+        plt.show()
 
         print(f"Processed : {image_path}")
 
