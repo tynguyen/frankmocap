@@ -230,13 +230,17 @@ def run_frank_mocap(args, bbox_detector, body_mocap, hand_mocap, visualizer):
         if not args.no_display:
             # Overlay depth
             res_dmap_8bit = res_dmap / res_dmap.max() * 255
-            res_dmap_8bit = res_dmap.astype(np.uint8)
+            res_dmap_8bit = res_dmap_8bit.astype(np.uint8)
             dmap_overlay = (
                 cv2.applyColorMap(res_dmap_8bit, cv2.COLORMAP_JET) * 0.7
                 + 0.3 * img_original_bgr
             )
             res_img = np.hstack([res_img, dmap_overlay])
             res_img = res_img.astype(np.uint8)
+            # Resize
+            sh, sw = res_img.shape[:2]
+            sh, sw = int(0.4 * sh), int(0.4 * sw)
+            res_img = cv2.resize(res_img, (sw, sh))
             ImShow(res_img)
 
         # save result image

@@ -25,8 +25,9 @@ from pytorch3d.renderer import (
 
 
 class Pytorch3dRenderer(object):
-    def __init__(self, img_size, mesh_color, is_get_dmap=False):
+    def __init__(self, img_size, mesh_color, is_get_dmap=False, is_get_all=False):
         self.is_get_dmap = is_get_dmap  # return depth map?
+        self.is_get_all = is_get_all  # return depth map, pytorch3d mesh?
         self.device = torch.device("cuda:0")
         # self.render_size = 1920
 
@@ -81,6 +82,27 @@ class Pytorch3dRenderer(object):
             scale_xyz=((1.0, 1.0, 1.0),),  # (1, 3)
         )
 
+        ## Debug:
+        ## Computer proj matrix
+        # """
+        # array([[[ 1.        ,  0.        ,  0.        , -0.        ],
+        # [ 0.        ,  1.        ,  0.        , -0.        ],
+        # [ 0.        ,  0.        ,  0.1010101 , -0.01010101],
+        # [ 0.        ,  0.        ,  0.        ,  1.        ]]],
+        #    dtype=float32)
+
+        # """
+        # proj_mat = cameras.compute_projection_matrix(
+        #    znear=0.1,
+        #    zfar=10.0,
+        #    max_x=1.0,
+        #    min_x=-1.0,
+        #    max_y=1.0,
+        #    min_y=-1.0,
+        #    scale_xyz=torch.tensor([[1.0, 1.0, 1.0]]),
+        # )
+        # print(f"[Info] Orthographic cam proj mat: \n {proj_mat}")
+
         raster_settings = RasterizationSettings(
             image_size=render_size, blur_radius=0, faces_per_pixel=1,
         )
@@ -106,6 +128,7 @@ class Pytorch3dRenderer(object):
         @inputs:
             bg_img: 1920 canvas
         """
+        orig_verts = verts
         verts = verts.copy()
         faces = faces.copy()
 
@@ -166,10 +189,10 @@ class Pytorch3dRenderer(object):
         # so need to multiple minus for vertices
         verts[:, :2] *= -1
 
+        # STEP 2
         # shift verts along the z-axis
         verts[:, 2] /= 112
         verts[:, 2] += 5
-
         verts_tensor = torch.from_numpy(verts).float().unsqueeze(0).cuda()
         faces_tensor = torch.from_numpy(faces.copy()).long().unsqueeze(0).cuda()
 
@@ -178,14 +201,38 @@ class Pytorch3dRenderer(object):
         textures = Textures(verts_rgb=mesh_color)
 
         # rendering mesh
-        mesh = Meshes(verts=verts_tensor, faces=faces_tensor, textures=textures)
+        mesh = Meshes(
+            verts=verts_tensor, faces=faces_tensor, textures=textures
+        )  # vertices here have X, Y in [-1, 1]
+
+        ########################
+        # DEBUG
+        # Plot the Zero Z plane
+        # zX, zY = np.meshgrid(range(-100, 1000), range(-100, 1000))
+        # zX = zX.reshape(-1, 1)
+        # zY = zY.reshape(-1, 1)
+        # zZ = np.zeros_like(zX)
+        # zero_z_plane = np.hstack([zX, zY, zZ])
+        # zero_z_plane = open3d.geometry.PointCloud(
+        #    open3d.utility.Vector3dVector(zero_z_plane)
+        # )
+        ## Convert pytorch3d meshes to open3d pcl
+        # o3d_verts = mesh.verts_list()[0].cpu().numpy()
+        # o3d_verts = open3d.utility.Vector3dVector(o3d_verts)
+        # o3d_pcl = open3d.geometry.PointCloud(o3d_verts)
+        ## Origin
+        # o3d_frame = open3d.geometry.TriangleMesh.create_coordinate_frame(size=200)
+        # open3d.visualization.draw_geometries([o3d_frame, zero_z_plane, o3d_pcl])
 
         # rendering depth map size 200 x 200, float 32 bit
         mesh_dmap = self.rasterizer(mesh).zbuf.cpu().squeeze().numpy()
+        mesh_dmap[np.where(mesh_dmap < self.min_z)] = 0  # TODO: uncomment this
+
+        # DONOT CONVERT
         # Convert to uint16
-        mesh_dmap[np.where(mesh_dmap < self.min_z)] = 0
-        mesh_dmap = mesh_dmap / mesh_dmap.max() * 65535
-        mesh_dmap = mesh_dmap.astype(np.uint16)
+        # mesh_dmap = mesh_dmap / mesh_dmap.max() * 65535
+        # mesh_dmap = mesh_dmap.astype(np.uint16)
+
         # mesh_dmap = mesh_dmap / mesh_dmap.max() * 255
         # mesh_dmap = mesh_dmap.astype(np.uint8)
         # import matplotlib.pyplot as plt
@@ -260,8 +307,9 @@ class Pytorch3dRenderer(object):
 
         res_img = cv2.resize(res_img, (self.img_size, self.img_size))
         mesh_dmap = cv2.resize(mesh_dmap, (self.img_size, self.img_size))
-
-        if self.is_get_dmap:
+        if self.is_get_all:
+            return res_img, mesh_dmap, mesh
+        elif self.is_get_dmap:
             return res_img, mesh_dmap
         else:
             return res_img

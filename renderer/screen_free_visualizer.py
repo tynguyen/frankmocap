@@ -46,7 +46,7 @@ colors = {
 
 
 class Visualizer(object):
-    def __init__(self, renderer_backend, is_get_dmap=False):
+    def __init__(self, renderer_backend, is_get_dmap=False, is_get_all=False):
         self.input_size = 1920
 
         # set-up renderer
@@ -60,8 +60,10 @@ class Visualizer(object):
                 img_size=self.input_size,
                 mesh_color=colors["light_purple"],
                 is_get_dmap=is_get_dmap,
+                is_get_all=is_get_all,
             )
         self.is_get_dmap = is_get_dmap
+        self.is_get_all = is_get_all
 
     def __render_pred_verts(self, img_original, pred_mesh_list):
         assert (
@@ -103,12 +105,20 @@ class Visualizer(object):
         for mesh in pred_mesh_list:
             verts = mesh["vertices"]
             faces = mesh["faces"]
-            if self.is_get_dmap:
+            if self.is_get_all:
+                rend_img, rend_dmap, res_mesh = self.renderer.render(
+                    verts, faces, rend_img
+                )
+            elif self.is_get_dmap:
                 rend_img, rend_dmap = self.renderer.render(verts, faces, rend_img)
             else:
                 rend_img = self.renderer.render(verts, faces, rend_img)
         res_img = rend_img[:h, :w, :]
-        if self.is_get_dmap:
+        if self.is_get_all:
+            res_dmap = rend_dmap[:h, :w]
+            return res_img, res_dmap, res_mesh
+
+        elif self.is_get_dmap:
             res_dmap = rend_dmap[:h, :w]
             return res_img, res_dmap
 
@@ -149,12 +159,18 @@ class Visualizer(object):
 
         # render predicted meshes
         if pred_mesh_list is not None:
-            if self.is_get_dmap:
+            if self.is_get_all:
+                rend_img, res_dmap, res_mesh = self.__render_pred_verts(
+                    input_img, pred_mesh_list
+                )
+            elif self.is_get_dmap:
                 rend_img, res_dmap = self.__render_pred_verts(input_img, pred_mesh_list)
             else:
                 rend_img = self.__render_pred_verts(input_img, pred_mesh_list)
             res_img = np.concatenate((res_img, rend_img), axis=1)
             # res_img = rend_img
-        if self.is_get_dmap:
+        if self.is_get_all:
+            return res_img, res_dmap, res_mesh
+        elif self.is_get_dmap:
             return res_img, res_dmap
         return res_img
