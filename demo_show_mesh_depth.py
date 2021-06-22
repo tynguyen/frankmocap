@@ -82,7 +82,7 @@ def run_regress(
             return list(), list(), list()
 
         # sort the bbox using bbox size
-        # only keep on bbox if args.single_person is set
+        # only keep a single bbox - the largest one if args.single_person is set
         body_bbox_list, hand_bbox_list = __filter_bbox_list(
             body_bbox_list, hand_bbox_list, args.single_person
         )
