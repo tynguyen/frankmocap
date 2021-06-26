@@ -34,6 +34,10 @@ import renderer.image_utils as imu
 from renderer.viewer2D import ImShow
 
 
+#  Frankmocap reconstruction to Kinect scale
+FM2K_SCALE = 1670
+
+
 def __filter_bbox_list(body_bbox_list, hand_bbox_list, single_person):
     # (to make the order as consistent as possible without tracking)
     bbox_size = [(x[2] * x[3]) for x in body_bbox_list]
@@ -135,7 +139,6 @@ def run_regress(
 def run_frank_mocap(args, bbox_detector, body_mocap, hand_mocap, visualizer):
     # Setup input data to handle different types of inputs
     input_type, input_data, dmap_data = demo_utils.setup_input(args)
-
     #############################################3
     K_kinect = np.array(
         [[613.095, 0, 636.84], [0, 612.806, 368.059], [0, 0, 1],]
@@ -143,12 +146,16 @@ def run_frank_mocap(args, bbox_detector, body_mocap, hand_mocap, visualizer):
 
     # Debug
     # Non-blocking visualization
-    o3d_vis = open3d.visualization.Visualizer()
-    o3d_vis.create_window()
-    # Change view angle (http://www.open3d.org/docs/0.9.0/tutorial/Advanced/customized_visualization.html)
-    o3d_vis_ctr = o3d_vis.get_view_control()
-    pi = 3.14159265359
-    o3d_vis_ctr.rotate(0, pi)
+    if args.display:
+        o3d_vis = open3d.visualization.Visualizer()
+        o3d_vis.create_window()
+        # Change view angle (http://www.open3d.org/docs/0.9.0/tutorial/Advanced/customized_visualization.html)
+        o3d_vis_ctr = o3d_vis.get_view_control()
+        pi = 3.14159265359
+        o3d_vis_ctr.rotate(0, pi)
+
+    # Indication that meshes are first plotted
+    is_first_plot = True
 
     cur_frame = args.start_frame
     video_frame = 0
@@ -361,19 +368,20 @@ def run_frank_mocap(args, bbox_detector, body_mocap, hand_mocap, visualizer):
 
         # Visualize the pointcloud
         # Plot the Zero Z plane
-        zX, zY = np.meshgrid(range(-100, 1000), range(-100, 1000))
-        zX = zX.reshape(-1, 1)
-        zY = zY.reshape(-1, 1)
-        zZ = np.zeros_like(zX)
-        zero_z_plane = np.hstack([zX, zY, zZ])
-        zero_z_plane = open3d.geometry.PointCloud(
-            open3d.utility.Vector3dVector(zero_z_plane)
-        )
+        if args.display:
+            zX, zY = np.meshgrid(range(-100, 1000), range(-100, 1000))
+            zX = zX.reshape(-1, 1)
+            zY = zY.reshape(-1, 1)
+            zZ = np.zeros_like(zX)
+            zero_z_plane = np.hstack([zX, zY, zZ])
+            zero_z_plane = open3d.geometry.PointCloud(
+                open3d.utility.Vector3dVector(zero_z_plane)
+            )
 
-        # Origin
-        o3d_frame = open3d.geometry.TriangleMesh.create_coordinate_frame(size=200)
-        o3d_vis.add_geometry(o3d_frame)
-        o3d_vis.add_geometry(zero_z_plane)
+            # Origin
+            o3d_frame = open3d.geometry.TriangleMesh.create_coordinate_frame(size=200)
+            o3d_vis.add_geometry(o3d_frame)
+            o3d_vis.add_geometry(zero_z_plane)
         # open3d.visualization.draw_geometries([front_mesh_pcl, o3d_frame, zero_z_plane])
 
         #######################################3
@@ -410,7 +418,9 @@ def run_frank_mocap(args, bbox_detector, body_mocap, hand_mocap, visualizer):
             ]
         )  # N x 3
         # Scale up pcl
-        scaled_verts_XYZ_w = verts_XYZ_w * dmap_scale  # * flength / 112
+        # TODO: use frame by frame version
+        # scaled_verts_XYZ_w = verts_XYZ_w * dmap_scale
+        scaled_verts_XYZ_w = verts_XYZ_w * FM2K_SCALE  # dmap_scale
         scaled_verts = open3d.utility.Vector3dVector(scaled_verts_XYZ_w)
         scaled_faces = open3d.utility.Vector3iVector(faces)
         scaled_pcl_w = open3d.geometry.PointCloud(scaled_verts)
@@ -465,7 +475,13 @@ def run_frank_mocap(args, bbox_detector, body_mocap, hand_mocap, visualizer):
         )  # white
         # pcl_w.paint_uniform_color(np.array([0.9, 0.2, 0.3]).reshape([3, 1]))  # Red
 
-        if cur_frame == args.start_frame + 1:
+
+        # If not visualize
+        if not args.display:
+            continue
+
+        # If this is the first time that meshes are plotted
+        if is_first_plot:
             scaled_pcl_w_ = scaled_pcl_w
             scaled_mesh_ = scaled_mesh
             kinect_pcl_ = kinect_pcl
@@ -481,6 +497,7 @@ def run_frank_mocap(args, bbox_detector, body_mocap, hand_mocap, visualizer):
             o3d_vis.update_geometry(kinect_pcl_)
             o3d_vis.poll_events()
             o3d_vis.update_renderer()
+            is_first_plot = False
 
         # breakpoint()
         ## Project back XYZ to the image frame to ensure that the XYZ calculation using the Frankmocap works
@@ -495,7 +512,7 @@ def run_frank_mocap(args, bbox_detector, body_mocap, hand_mocap, visualizer):
         plt.legend(["Red: frankmocap reprojection", "Blue: original"])
         plt.title("Reprojection from scaled XYZ_w to Image")
         plt.axis("off")
-        plt.show()
+        # plt.show()
 
         print(f"Processed : {image_path}")
 

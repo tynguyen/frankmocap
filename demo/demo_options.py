@@ -168,7 +168,9 @@ class DemoOptions:
             choices=["pytorch3d", "opendr", "opengl_gui", "opengl"],
             help="type of renderer to use",
         )
-
+        parser.add_argument(
+            "--display", action="store_true", help="Visualize figures or not"
+        )
         self.parser = parser
 
     def parse(self):
